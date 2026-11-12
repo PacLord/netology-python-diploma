@@ -52,9 +52,8 @@ class User(AbstractUser):
     REQUIRED_FIELDS = []
 
     # AbstractUser типизирован под стандартный менеджер Django.
-    # Наш менеджер наследуется от BaseUserManager и использует email.
-    objects = UserManager()  # pyright: ignore[reportAssignmentType]
-
+    # менеджер наследуется от BaseUserManager и использует email.
+    objects: UserManager = UserManager()  # pyright: ignore[reportAssignmentType]
     class Meta:
         verbose_name = "Пользователь"
         verbose_name_plural = "Пользователи"

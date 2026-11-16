@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="strict-origin">
+
+    <title>Подтверждение регистрации</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 460px;
+            padding: 40px 32px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+            text-align: center;
+        }
+
+        .brand {
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #64748b;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin: 24px 0 16px;
+        }
+
+        p {
+            color: #64748b;
+            line-height: 1.6;
+        }
+
+        .email {
+            margin: 24px 0;
+            font-weight: bold;
+            overflow-wrap: anywhere;
+            color: #1e293b;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .success {
+            color: #15803d;
+        }
+
+        .error {
+            color: #dc2626;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="card">
+        <div class="brand">NETOLOGY PROCUREMENT</div>
+
+        {% if success %}
+
+        <h1 class="success">Email подтверждён!</h1>
+
+        <p>{{ message }}</p>
+        <p>Теперь вы можете войти в систему.</p>
+
+        {% elif email and token %}
+
+        <h1>Подтверждение email</h1>
+
+        <p>
+            Для завершения регистрации подтвердите
+            свою электронную почту.
+        </p>
+
+        <div class="email">{{ email }}</div>
+
+        <form method="post" action="{% url 'users:register-confirm' %}">
+            {% csrf_token %}
+
+            <input type="hidden" name="email" value="{{ email }}">
+
+            <input type="hidden" name="token" value="{{ token }}">
+
+            <button type="submit">
+                Подтвердить регистрацию
+            </button>
+        </form>
+
+        {% else %}
+
+        <h1 class="error">Подтверждение не выполнено</h1>
+
+        <p>{{ message }}</p>
+
+        <p>
+            Проверьте ссылку из письма
+            или запросите новое письмо подтверждения.
+        </p>
+
+        {% endif %}
+    </main>
+</body>
+
+</html>

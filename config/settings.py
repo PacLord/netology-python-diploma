@@ -174,9 +174,6 @@ PUBLIC_BASE_URL = os.getenv(
 # Подтверждение электронной почты истекает через 24 часа.
 EMAIL_CONFIRMATION_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
-# Минимальный интервал между отправками писем подтверждения.
-EMAIL_CONFIRMATION_RESEND_INTERVAL_SECONDS = 60
-
 # Email configuration
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",

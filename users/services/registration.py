@@ -1,10 +1,6 @@
-from datetime import timedelta
-
-from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.utils import timezone
 
-from users.models import EmailConfirmationToken, User
+from users.models import User
 
 from .email_confirmation import generate_email_confirmation_token
 from .emails import send_confirmation_email
@@ -178,63 +174,3 @@ def register_user_with_confirmation(
 
     return user
 
-
-@transaction.atomic
-def resend_confirmation_email(*, email: str) -> None:
-    """
-    Повторно отправляет письмо подтверждения регистрации.
-
-    Генерирует новый токен для существующего неактивного
-    пользователя, если с момента предыдущей генерации
-    прошло достаточно времени.
-
-    Не сообщает о существовании или состоянии учётной
-    записи, чтобы предотвратить перебор email-адресов.
-
-    Письмо отправляется после успешного завершения
-    транзакции.
-
-    Args:
-        email (str): Электронная почта пользователя.
-    """
-    email = email.strip().lower()
-
-    # Блокируем пользователя на время операции.
-    user = User.objects.select_for_update().filter(email=email).first()
-
-    # Не отправляем письмо неизвестным или активным
-    # пользователям.
-    if user is None or user.is_active:
-        return
-
-    # Получаем существующий токен подтверждения.
-    token_record = EmailConfirmationToken.objects.filter(
-        user=user,
-    ).first()
-
-    # Ограничиваем частоту повторной отправки.
-    if token_record is not None:
-        next_allowed_at = token_record.created_at + timedelta(
-            seconds=(settings.EMAIL_CONFIRMATION_RESEND_INTERVAL_SECONDS),
-        )
-
-        if timezone.now() < next_allowed_at:
-            return
-
-    # Генерируем новый токен.
-    # Предыдущий токен становится недействительным.
-    token = generate_email_confirmation_token(user)
-
-    def send_email_after_commit() -> None:
-        """
-        Отправляет новое письмо после сохранения токена.
-        """
-        _send_registration_confirmation(
-            user=user,
-            token=token,
-        )
-
-    transaction.on_commit(
-        send_email_after_commit,
-        robust=True,
-    )

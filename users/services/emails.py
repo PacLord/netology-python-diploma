@@ -2,6 +2,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core.mail import send_mail
+from django.urls import reverse
 
 from users.models import User
 
@@ -14,8 +15,8 @@ def build_confirmation_url(
     """
     Формирует ссылку для подтверждения электронной почты.
 
-    Использует публичный адрес приложения и добавляет
-    email пользователя и токен в параметры запроса.
+    Использует публичный адрес приложения и именованный
+    маршрут Django, добавляя email и токен в параметры URL.
 
     Args:
         email (str): Электронная почта пользователя.
@@ -31,7 +32,9 @@ def build_confirmation_url(
         }
     )
 
-    return f"{settings.PUBLIC_BASE_URL}/api/v1/user/register/confirm?{query_params}"
+    confirmation_path = reverse("users:register-confirm")
+
+    return f"{settings.PUBLIC_BASE_URL}{confirmation_path}?{query_params}"
 
 
 def send_confirmation_email(

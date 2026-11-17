@@ -142,3 +142,180 @@ class EmailConfirmationResponseSerializer(serializers.Serializer):
 
     detail = serializers.CharField()
     is_active = serializers.BooleanField()
+
+
+class UserLoginSerializer(serializers.Serializer):
+    """
+    Проверяет входные данные для авторизации пользователя.
+
+    Принимает электронную почту и пароль, необходимые
+    для проверки учётных данных пользователя.
+    """
+
+    email = serializers.EmailField(
+        max_length=254,
+    )
+
+    password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+    )
+
+    def validate_email(self, value: str) -> str:
+        """
+        Нормализует электронную почту пользователя.
+
+        Удаляет пробелы по краям и приводит адрес
+        к нижнему регистру.
+
+        Args:
+            value (str): Электронная почта пользователя.
+
+        Returns:
+            str: Нормализованный адрес электронной почты.
+        """
+        return value.strip().lower()
+
+
+class UserLoginResponseSerializer(serializers.Serializer):
+    """
+    Описывает результат успешной авторизации.
+
+    Содержит токен, который клиент должен использовать
+    для последующих запросов к защищённым эндпоинтам API.
+    """
+
+    token = serializers.CharField()
+
+
+class UserDetailsSerializer(serializers.ModelSerializer):
+    """
+    Представляет публичные данные профиля пользователя.
+
+    Используется для получения информации о текущем
+    авторизованном пользователе через REST API.
+
+    Не включает пароль, административные права
+    и другие служебные поля модели.
+    """
+
+    class Meta:
+        model = User
+
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "company",
+            "position",
+            "type",
+            "is_active",
+        )
+
+        read_only_fields = fields
+
+
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    """
+    Обновляет данные профиля авторизованного пользователя.
+
+    Позволяет изменять персональные данные, email
+    и пароль. Пароль сохраняется только в виде хеша.
+    """
+
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        trim_whitespace=False,
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "first_name",
+            "last_name",
+            "email",
+            "company",
+            "position",
+            "password",
+        )
+        extra_kwargs = {
+            "email": {"required": False},
+        }
+
+    def validate_email(self, value: str) -> str:
+        """
+        Проверяет уникальность нового email.
+
+        Исключает текущего пользователя из проверки,
+        чтобы разрешить сохранение своего email без изменений.
+
+        Args:
+            value (str): Новый электронный адрес.
+
+        Returns:
+            str: Нормализованный email.
+
+        Raises:
+            serializers.ValidationError: Если адрес занят
+                другим пользователем.
+        """
+        email = value.strip().lower()
+
+        queryset = User.objects.filter(email__iexact=email)
+
+        # Исключаем текущего пользователя, если он существует.
+        if isinstance(self.instance, User):
+            queryset = queryset.exclude(pk=self.instance.pk)
+
+        if queryset.exists():
+            raise serializers.ValidationError("Пользователь с таким email уже существует.")
+
+        return email
+
+    def validate_password(self, value: str) -> str:
+        """
+        Проверяет сложность нового пароля.
+
+        Args:
+            value (str): Новый пароль.
+
+        Returns:
+            str: Проверенный пароль.
+
+        Raises:
+            serializers.ValidationError: Если пароль слабый.
+        """
+        try:
+            validate_password(value, user=self.instance)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError(error.messages) from error
+
+        return value
+
+    def update(
+        self,
+        instance: User,
+        validated_data: dict,
+    ) -> User:
+        """
+        Сохраняет изменения профиля и пароля.
+
+        Args:
+            instance (User): Текущий пользователь.
+            validated_data (dict): Проверенные данные.
+
+        Returns:
+            User: Обновлённый пользователь.
+        """
+        password = validated_data.pop("password", None)
+
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+
+        if password is not None:
+            instance.set_password(password)
+
+        instance.save()
+        return instance

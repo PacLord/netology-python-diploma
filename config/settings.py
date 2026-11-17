@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     # Third-party apps
     "rest_framework",
     "rest_framework.authtoken",
+    "django_rest_passwordreset",
     "drf_spectacular",
     # Local apps
     "users.apps.UsersConfig",

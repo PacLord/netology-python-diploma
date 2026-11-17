@@ -1,6 +1,11 @@
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.utils.cache import add_never_cache_headers
+from django_rest_passwordreset.serializers import (
+    PasswordTokenSerializer,
+    ResetTokenSerializer,
+)
+from django_rest_passwordreset.views import ResetPasswordConfirm
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -10,7 +15,7 @@ from drf_spectacular.utils import (
 from rest_framework import status
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,8 +23,16 @@ from rest_framework.views import APIView
 from users.serializers import (
     EmailConfirmationResponseSerializer,
     EmailConfirmationSerializer,
+    UserDetailsSerializer,
+    UserLoginResponseSerializer,
+    UserLoginSerializer,
+    UserProfileUpdateSerializer,
     UserRegistrationResponseSerializer,
     UserRegistrationSerializer,
+)
+from users.services.authentication import (
+    InvalidCredentialsError,
+    authenticate_user,
 )
 from users.services.email_confirmation import (
     EmailConfirmationError,
@@ -307,7 +320,6 @@ class EmailConfirmationView(APIView):
                 SessionAuthentication().enforce_csrf(request)
 
             except PermissionDenied:
-
                 return self._render_confirmation_page(
                     request,
                     message=(
@@ -368,4 +380,369 @@ class EmailConfirmationView(APIView):
                 "is_active": user.is_active,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class UserLoginView(APIView):
+    """
+    Авторизует пользователя в системе закупок.
+
+    Проверяет электронную почту и пароль,
+    запрещает вход неактивным пользователям
+    и возвращает токен авторизации DRF.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Пользователи"],
+        summary="Авторизация пользователя",
+        description=(
+            "Проверяет email и пароль пользователя. "
+            "При успешной авторизации возвращает токен DRF. "
+            "Токен необходимо передавать в заголовке "
+            "Authorization: Token <token>."
+        ),
+        request=UserLoginSerializer,
+        responses={
+            200: UserLoginResponseSerializer,
+            400: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                description="Некорректные входные данные.",
+            ),
+            401: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                description=("Неверный email, пароль или неактивная учётная запись."),
+            ),
+        },
+    )
+    def post(self, request: Request) -> Response:
+        """
+        Обрабатывает запрос авторизации пользователя.
+
+        Проверяет формат входных данных и вызывает
+        сервис авторизации для получения токена.
+
+        Args:
+            request (Request): HTTP-запрос с email
+                и паролем пользователя.
+
+        Returns:
+            Response: Токен при успешной авторизации,
+                ошибку 400 при некорректных данных
+                или ошибку 401 при неверных учётных данных.
+        """
+        serializer = UserLoginSerializer(
+            data=request.data,
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        if not isinstance(data, dict):
+            raise RuntimeError("Неккоректный формат данных")
+
+        try:
+            token = authenticate_user(
+                email=data["email"],
+                password=data["password"],
+            )
+
+        except InvalidCredentialsError:
+            return Response(
+                {
+                    "detail": "Неверный email или пароль.",
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+                headers={
+                    "WWW-Authenticate": "Token",
+                },
+            )
+
+        return Response(
+            {
+                "token": token,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class UserDetailsView(APIView):
+    """
+    Предоставляет данные текущего пользователя.
+
+    Доступен только авторизованным пользователям.
+    Использует стандартную токенную аутентификацию DRF.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Пользователи"],
+        summary="Получение профиля пользователя",
+        description=(
+            "Возвращает данные текущего авторизованного "
+            "пользователя. Для доступа необходимо передать "
+            "токен в заголовке Authorization."
+        ),
+        responses={
+            200: UserDetailsSerializer,
+            401: OpenApiResponse(
+                description=("Токен авторизации отсутствует или недействителен."),
+            ),
+        },
+    )
+    def get(self, request: Request) -> Response:
+        """
+        Возвращает профиль текущего пользователя.
+
+        Использует пользователя, определённого DRF
+        по токену авторизации.
+
+        Args:
+            request (Request): HTTP-запрос авторизованного
+                пользователя.
+
+        Returns:
+            Response: Данные профиля текущего пользователя.
+        """
+        serializer = UserDetailsSerializer(
+            request.user,
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        tags=["Пользователи"],
+        summary="Изменение профиля пользователя",
+        request=UserProfileUpdateSerializer,
+        responses={200: UserDetailsSerializer},
+    )
+    def post(self, request: Request) -> Response:
+        """
+        Обновляет профиль текущего пользователя.
+
+        Args:
+            request (Request): Запрос с изменяемыми данными.
+
+        Returns:
+            Response: Обновлённый профиль пользователя.
+        """
+        serializer = UserProfileUpdateSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+        )
+
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(
+            UserDetailsSerializer(user).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class UserPasswordResetConfirmView(ResetPasswordConfirm):
+    """
+    Подтверждает восстановление пароля через API или HTML.
+
+    GET отображает страницу ввода нового пароля.
+    POST с JSON использует стандартную логику библиотеки.
+    POST из HTML-формы возвращает страницу с результатом.
+    """
+
+    def _render_page(
+        self,
+        request: Request,
+        *,
+        token: str = "",
+        message: str = "",
+        success: bool = False,
+        status_code: int = status.HTTP_200_OK,
+    ) -> HttpResponse:
+        """
+        Формирует HTML-страницу восстановления пароля.
+
+        Args:
+            request (Request): HTTP-запрос пользователя.
+            token (str): Токен восстановления пароля.
+            message (str): Сообщение для пользователя.
+            success (bool): Признак успешного восстановления.
+            status_code (int): HTTP-статус ответа.
+
+        Returns:
+            HttpResponse: HTML-страница восстановления пароля.
+        """
+        response = render(
+            request._request,
+            "users/password_reset.html",
+            context={
+                "token": token,
+                "message": message,
+                "success": success,
+            },
+            status=status_code,
+        )
+
+        add_never_cache_headers(response)
+        response["Referrer-Policy"] = "strict-origin"
+
+        return response
+
+    @extend_schema(
+        tags=["Пользователи"],
+        summary="Страница восстановления пароля",
+        parameters=[
+            OpenApiParameter(
+                name="token",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="Токен из письма восстановления.",
+            ),
+        ],
+        responses={
+            (200, "text/html"): str,
+            (400, "text/html"): str,
+        },
+    )
+    def get(self, request: Request) -> HttpResponse:
+        """
+        Отображает форму установки нового пароля.
+
+        Проверяет токен, но не использует его.
+
+        Args:
+            request (Request): GET-запрос с токеном.
+
+        Returns:
+            HttpResponse: HTML-форма или сообщение об ошибке.
+        """
+        token = request.query_params.get("token", "")
+
+        serializer = ResetTokenSerializer(
+            data={"token": token},
+        )
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except (ValidationError, Http404):
+            return self._render_page(
+                request,
+                message="Ссылка недействительна или срок её действия истёк.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return self._render_page(
+            request,
+            token=token,
+        )
+
+    @extend_schema(
+        tags=["Пользователи"],
+        summary="Установка нового пароля",
+        description=(
+            "Принимает токен и новый пароль. Поддерживает JSON API и HTML-формы."
+        ),
+        request=PasswordTokenSerializer,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(
+        self,
+        request: Request,
+        *args: object,
+        **kwargs: object,
+    ) -> Response | HttpResponse:
+        """
+        Устанавливает новый пароль пользователя.
+
+        Для JSON-запросов сохраняет стандартное поведение
+        библиотеки django-rest-passwordreset.
+
+        Для HTML-форм проверяет CSRF и совпадение паролей,
+        после чего отображает результат восстановления.
+
+        Args:
+            request (Request): Запрос с токеном и паролем.
+            *args: Дополнительные позиционные аргументы.
+            **kwargs: Дополнительные именованные аргументы.
+
+        Returns:
+            Response | HttpResponse: JSON-ответ или HTML-страница.
+        """
+        content_type = (request.content_type or "").split(";")[0].strip().lower()
+
+        is_form = content_type in (
+            "application/x-www-form-urlencoded",
+            "multipart/form-data",
+        )
+
+        # Для JSON оставляем стандартную реализацию библиотеки.
+        if not is_form:
+            return super().post(request, *args, **kwargs)
+
+        # Для браузерной формы обязательно проверяем CSRF.
+        try:
+            SessionAuthentication().enforce_csrf(request)
+        except PermissionDenied:
+            return self._render_page(
+                request,
+                message="Ошибка безопасности. Откройте ссылку повторно.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        token = request.data.get("token", "")
+        password = request.data.get("password")
+        password_confirm = request.data.get("password_confirm")
+
+        if not password or password != password_confirm:
+            return self._render_page(
+                request,
+                token=token,
+                message="Пароли не совпадают или не заполнены.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            # Используем готовую логику восстановления пароля.
+            # Она же отправляет сигнал post_password_reset.
+            super().post(request, *args, **kwargs)
+
+        except Http404:
+            return self._render_page(
+                request,
+                message="Токен недействителен или срок его действия истёк.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        except ValidationError as error:
+            details = error.detail
+
+            if isinstance(details, dict):
+                errors = details.get("password", [])
+                message = " ".join(str(item) for item in errors)
+            else:
+                message = "Некорректный пароль."
+
+            return self._render_page(
+                request,
+                token=token,
+                message=message or "Некорректный пароль.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return self._render_page(
+            request,
+            message="Ваш пароль успешно изменён.",
+            success=True,
         )

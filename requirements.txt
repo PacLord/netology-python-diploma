@@ -1,6 +1,7 @@
 asgiref==3.13.0
 attrs==26.1.0
 django==5.2.19
+django-rest-passwordreset==1.6.0
 djangorestframework==3.18.3
 drf-spectacular==0.30.0
 inflection==0.5.1

@@ -2,7 +2,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from users.models import User
+from users.models import Contact, User
 
 
 class UserRegistrationSerializer(serializers.Serializer):
@@ -270,7 +270,9 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             queryset = queryset.exclude(pk=self.instance.pk)
 
         if queryset.exists():
-            raise serializers.ValidationError("Пользователь с таким email уже существует.")
+            raise serializers.ValidationError(
+                "Пользователь с таким email уже существует."
+            )
 
         return email
 
@@ -319,3 +321,168 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 
         instance.save()
         return instance
+
+
+class ContactSerializer(serializers.ModelSerializer):
+    """
+    Сериализует контактные данные и адрес доставки.
+
+    Автоматически определяет владельца контакта
+    по авторизованному пользователю.
+
+    Проверяет ограничение количества контактов:
+    не более пяти на одного пользователя.
+    """
+
+    user = serializers.HiddenField(
+        default=serializers.CurrentUserDefault(),
+    )
+
+    class Meta:
+        model = Contact
+
+        fields = (
+            "id",
+            "user",
+            "last_name",
+            "first_name",
+            "middle_name",
+            "email",
+            "phone",
+            "city",
+            "street",
+            "house",
+            "structure",
+            "building",
+            "apartment",
+        )
+
+        read_only_fields = ("id",)
+
+    def validate(self, attrs: dict) -> dict:
+        """
+        Проверяет возможность создания нового контакта.
+
+        При создании ограничивает количество контактов
+        текущего пользователя пятью записями.
+
+        При редактировании существующего контакта
+        повторная проверка количества не требуется.
+
+        Args:
+            attrs (dict): Проверенные значения полей контакта.
+
+        Returns:
+            dict: Данные контакта после проверки.
+
+        Raises:
+            serializers.ValidationError: Если превышен
+                лимит контактов пользователя.
+        """
+        if self.instance is None:
+            user = attrs["user"]
+
+            contacts_count = Contact.objects.filter(
+                user=user,
+            ).count()
+
+            if contacts_count >= Contact.MAX_CONTACTS_PER_USER:
+                raise serializers.ValidationError(
+                    "Можно сохранить не более 5 адресов доставки."
+                )
+
+        return attrs
+
+
+class ContactUpdateSerializer(ContactSerializer):
+    """
+    Проверяет данные для изменения существующего контакта.
+
+    Принимает идентификатор контакта и необязательные
+    поля, которые пользователь хочет изменить.
+    """
+
+    id = serializers.IntegerField(
+        min_value=1,
+        help_text="Идентификатор изменяемого контакта.",
+    )
+
+    class Meta(ContactSerializer.Meta):
+        extra_kwargs = {
+            "last_name": {"required": False},
+            "first_name": {"required": False},
+            "email": {"required": False},
+            "phone": {"required": False},
+            "city": {"required": False},
+            "street": {"required": False},
+        }
+
+    def update(
+        self,
+        instance: Contact,
+        validated_data: dict,
+    ) -> Contact:
+        """
+        Обновляет поля существующего контакта.
+
+        Исключает идентификатор из изменяемых полей,
+        чтобы сохранить первичный ключ записи.
+
+        Args:
+            instance (Contact): Изменяемый контакт.
+            validated_data (dict): Проверенные изменения.
+
+        Returns:
+            Contact: Обновлённый контакт.
+        """
+        validated_data.pop("id", None)
+
+        return super().update(instance, validated_data)
+
+
+class ContactDeleteSerializer(serializers.Serializer):
+    """
+    Проверяет запрос на удаление контактов.
+
+    Принимает непустой список идентификаторов
+    контактов, которые необходимо удалить.
+    """
+
+    items = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        help_text="Список идентификаторов удаляемых контактов.",
+    )
+
+    def validate_items(self, value: list[int]) -> list[int]:
+        """
+        Проверяет уникальность идентификаторов контактов.
+
+        Args:
+            value (list[int]): Список идентификаторов.
+
+        Returns:
+            list[int]: Проверенный список идентификаторов.
+
+        Raises:
+            serializers.ValidationError: Если список
+                содержит повторяющиеся идентификаторы.
+        """
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError(
+                "Идентификаторы контактов не должны повторяться."
+            )
+
+        return value
+
+
+class ContactDeleteResponseSerializer(serializers.Serializer):
+    """
+    Описывает результат удаления контактов пользователя.
+
+    Возвращает количество успешно удалённых контактов.
+    """
+
+    deleted = serializers.IntegerField(
+        help_text="Количество удалённых контактов.",
+    )

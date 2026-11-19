@@ -1,5 +1,8 @@
+from typing import cast
+
+from django.db import transaction
 from django.http import Http404, HttpResponse
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 from django.utils.cache import add_never_cache_headers
 from django_rest_passwordreset.serializers import (
     PasswordTokenSerializer,
@@ -12,15 +15,20 @@ from drf_spectacular.utils import (
     OpenApiResponse,
     extend_schema,
 )
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from users.models import Contact, User
 from users.serializers import (
+    ContactDeleteResponseSerializer,
+    ContactDeleteSerializer,
+    ContactSerializer,
+    ContactUpdateSerializer,
     EmailConfirmationResponseSerializer,
     EmailConfirmationSerializer,
     UserDetailsSerializer,
@@ -745,4 +753,276 @@ class UserPasswordResetConfirmView(ResetPasswordConfirm):
             request,
             message="Ваш пароль успешно изменён.",
             success=True,
+        )
+
+
+class ContactView(APIView):
+    """
+    Управляет контактами и адресами доставки.
+
+    Предоставляет доступ только к контактам
+    текущего авторизованного пользователя.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Контакты"],
+        summary="Получение контактов покупателя",
+        description=(
+            "Возвращает список контактов и адресов доставки "
+            "текущего авторизованного покупателя."
+        ),
+        responses={
+            200: ContactSerializer(many=True),
+        },
+    )
+    def get(self, request: Request) -> Response:
+        """
+        Возвращает список контактов текущего покупателя.
+
+        Фильтрует записи по идентификатору пользователя,
+        полученному из токена авторизации.
+
+        Args:
+            request (Request): HTTP-запрос покупателя.
+
+        Returns:
+            Response: Список принадлежащих покупателю контактов.
+        """
+        contacts = Contact.objects.filter(
+            user_id=request.user.pk,
+        )
+
+        serializer = ContactSerializer(
+            contacts,
+            many=True,
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        tags=["Контакты"],
+        summary="Добавление контакта",
+        description=(
+            "Создаёт контакт и адрес доставки "
+            "для текущего авторизованного пользователя. "
+            "Допускается не более пяти контактов."
+        ),
+        request=ContactSerializer,
+        responses={
+            201: ContactSerializer,
+            400: OpenApiTypes.OBJECT,
+            401: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        """
+        Создаёт новый контакт текущего пользователя.
+
+        Проверяет входные данные и ограничение количества
+        контактов. Блокирует запись пользователя на время
+        создания, чтобы параллельные API-запросы не могли
+        одновременно превысить установленный лимит.
+
+        Args:
+            request (Request): HTTP-запрос с данными контакта.
+
+        Returns:
+            Response: Созданный контакт и HTTP-статус 201.
+
+        Raises:
+            ValidationError: Если данные некорректны
+                или превышен лимит контактов.
+        """
+        with transaction.atomic():
+            # Блокируем пользователя до конца транзакции.
+            User.objects.select_for_update().get(
+                pk=request.user.pk,
+            )
+
+            serializer = ContactSerializer(
+                data=request.data,
+                context={"request": request},
+            )
+
+            serializer.is_valid(raise_exception=True)
+
+            contact = serializer.save()
+
+        return Response(
+            ContactSerializer(contact).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        tags=["Контакты"],
+        summary="Редактирование контакта",
+        description=(
+            "Позволяет изменить отдельные поля контакта "
+            "текущего пользователя. "
+            "Идентификатор контакта обязателен."
+        ),
+        request=ContactUpdateSerializer,
+        responses={
+            200: ContactSerializer,
+            400: OpenApiTypes.OBJECT,
+            401: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    @extend_schema(
+        tags=["Контакты"],
+        summary="Частичное обновление контакта",
+        description=(
+            "Изменяет отдельные поля контакта текущего пользователя. "
+            "Идентификатор контакта обязателен."
+        ),
+        request=ContactUpdateSerializer,
+        responses={
+            200: ContactSerializer,
+            400: OpenApiTypes.OBJECT,
+            401: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    def patch(self, request: Request) -> Response:
+        """
+        Частично обновляет контакт текущего пользователя.
+
+        Находит контакт по идентификатору, проверяет
+        принадлежность пользователю и обновляет только
+        переданные поля.
+
+        Args:
+            request (Request): Запрос с идентификатором
+                контакта и изменяемыми полями.
+
+        Returns:
+            Response: Обновлённые данные контакта.
+
+        Raises:
+            ValidationError: Если переданы некорректные данные.
+            Http404: Если контакт не найден или принадлежит
+                другому пользователю.
+        """
+
+        contact_id = request.data.get("id")
+
+        if (
+            not isinstance(contact_id, int)
+            or isinstance(contact_id, bool)
+            or contact_id < 1
+        ):
+            raise ValidationError(
+                {"id": ["Укажите положительный целочисленный идентификатор контакта."]}
+            )
+
+        contact = get_object_or_404(
+            Contact,
+            pk=contact_id,
+            user_id=request.user.pk,
+        )
+
+        serializer = ContactUpdateSerializer(
+            contact,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            ContactSerializer(contact).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        tags=["Контакты"],
+        summary="Удаление контактов пользователя",
+        description=(
+            "Удаляет один или несколько контактов текущего "
+            "пользователя. Идентификаторы передаются через "
+            "query-параметр items, разделённые запятыми."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="items",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description=(
+                    "Идентификаторы контактов через запятую. Например: 2,3,5."
+                ),
+            ),
+        ],
+        responses={
+            200: ContactDeleteResponseSerializer,
+            400: OpenApiTypes.OBJECT,
+            401: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    @transaction.atomic
+    def delete(self, request: Request) -> Response:
+        """
+        Удаляет выбранные контакты текущего пользователя.
+
+        Проверяет входные данные и принадлежность всех
+        контактов пользователю. Удаление выполняется
+        в одной транзакции.
+
+        Args:
+            request (Request): HTTP-запрос со списком
+                идентификаторов удаляемых контактов.
+
+        Returns:
+            Response: Количество удалённых контактов.
+
+        Raises:
+            ValidationError: Если передан некорректный список.
+            NotFound: Если один или несколько контактов
+                не существуют либо принадлежат другому пользователю.
+        """
+
+        # Получаем идентификаторы из query-параметра.
+        items = request.query_params.get("items", "")
+
+        # Преобразуем строку "2,3,5" в список ["2", "3", "5"].
+        contact_ids_raw = items.split(",") if items else []
+
+        serializer = ContactDeleteSerializer(
+            data={"items": contact_ids_raw},
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        data = cast(
+            dict[str, list[int]],
+            serializer.validated_data,
+        )
+
+        contact_ids = data["items"]
+
+        # Выбираем и блокируем только собственные контакты.
+        contacts = Contact.objects.filter(
+            user_id=request.user.pk,
+            id__in=contact_ids,
+        ).select_for_update()
+
+        existing_ids = list(contacts.values_list("id", flat=True))
+
+        if len(existing_ids) != len(contact_ids):
+            raise NotFound("Один или несколько контактов не найдены.")
+
+        contacts.delete()
+
+        return Response(
+            {"deleted": len(existing_ids)},
+            status=status.HTTP_200_OK,
         )

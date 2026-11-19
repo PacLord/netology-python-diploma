@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import User
+from .models import Contact, User
 
 
 @admin.register(User)
@@ -96,3 +96,45 @@ class CustomUserAdmin(UserAdmin):
             },
         ),
     )
+
+
+@admin.register(Contact)
+class ContactAdmin(admin.ModelAdmin):
+    """
+    Настраивает административный интерфейс контактов.
+
+    Позволяет просматривать и редактировать
+    контактные данные и адреса доставки пользователей.
+    """
+
+    list_display = (
+        "id",
+        "last_name",
+        "first_name",
+        "user",
+        "phone",
+        "email",
+        "city",
+    )
+
+    list_display_links = (
+        "id",
+        "last_name",
+    )
+
+    search_fields = (
+        "last_name",
+        "first_name",
+        "middle_name",
+        "email",
+        "phone",
+        "city",
+        "street",
+        "user__email",
+    )
+
+    list_select_related = ("user",)
+
+    autocomplete_fields = ("user",)
+
+    ordering = ("id",)

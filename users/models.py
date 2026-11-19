@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from .managers import UserManager
@@ -110,3 +111,126 @@ class EmailConfirmationToken(models.Model):
             str: Название и идентификатор токена.
         """
         return f"Токен подтверждения #{self.pk}"
+
+
+class Contact(models.Model):
+    """
+    Контактные данные и адрес доставки покупателя.
+
+    Каждый пользователь может сохранить несколько
+    контактов с разными получателями и адресами.
+    """
+
+    MAX_CONTACTS_PER_USER = 5
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Пользователь",
+        on_delete=models.CASCADE,
+        related_name="contacts",
+    )
+
+    user_id: int | None
+
+    last_name = models.CharField(
+        verbose_name="Фамилия получателя",
+        max_length=150,
+    )
+
+    first_name = models.CharField(
+        verbose_name="Имя получателя",
+        max_length=150,
+    )
+
+    middle_name = models.CharField(
+        verbose_name="Отчество получателя",
+        max_length=150,
+        blank=True,
+    )
+
+    email = models.EmailField(
+        verbose_name="Email получателя",
+    )
+
+    phone = models.CharField(
+        verbose_name="Телефон",
+        max_length=20,
+    )
+
+    city = models.CharField(
+        verbose_name="Город",
+        max_length=100,
+    )
+
+    street = models.CharField(
+        verbose_name="Улица",
+        max_length=150,
+    )
+
+    house = models.CharField(
+        verbose_name="Дом",
+        max_length=20,
+        blank=True,
+    )
+
+    structure = models.CharField(
+        verbose_name="Корпус",
+        max_length=20,
+        blank=True,
+    )
+
+    building = models.CharField(
+        verbose_name="Строение",
+        max_length=20,
+        blank=True,
+    )
+
+    apartment = models.CharField(
+        verbose_name="Квартира",
+        max_length=20,
+        blank=True,
+    )
+
+    class Meta:
+        verbose_name = "Контакт"
+        verbose_name_plural = "Контакты"
+        ordering = ["id"]
+
+    def clean(self) -> None:
+        """
+        Проверяет ограничение количества контактов пользователя.
+
+        Разрешает хранить не более пяти адресов доставки.
+        При редактировании существующего контакта
+        исключает его из подсчёта.
+
+        Raises:
+            ValidationError: Если у пользователя уже
+                сохранено максимальное количество контактов.
+        """
+        super().clean()
+
+        if self.user_id is None:
+            return
+
+        contacts = Contact.objects.filter(
+            user_id=self.user_id,
+        )
+
+        # При редактировании исключаем текущий контакт.
+        if self.pk is not None:
+            contacts = contacts.exclude(pk=self.pk)
+
+        if contacts.count() >= self.MAX_CONTACTS_PER_USER:
+            raise ValidationError(
+                {"user": ("У пользователя может быть не более 5 адресов доставки.")}
+            )
+
+    def __str__(self) -> str:
+        """
+        Возвращает краткое представление контакта.
+
+        Returns:
+            str: Получатель и город доставки.
+        """
+        return f"{self.last_name} {self.first_name} ({self.city})"

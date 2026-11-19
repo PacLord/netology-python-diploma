@@ -2,6 +2,7 @@ from django.urls import path
 from django_rest_passwordreset.views import reset_password_request_token
 
 from users.views import (
+    ContactView,
     EmailConfirmationView,
     UserDetailsView,
     UserLoginView,
@@ -41,5 +42,10 @@ urlpatterns = [
         "password_reset/confirm",
         UserPasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
+    ),
+    path(
+        "contact",
+        ContactView.as_view(),
+        name="contact",
     ),
 ]

@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     # Local apps
     "users.apps.UsersConfig",
     "catalog.apps.CatalogConfig",
+    "orders.apps.OrdersConfig",
 ]
 
 
@@ -196,4 +197,8 @@ EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
 EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False").lower() == "true"
 EMAIL_TIMEOUT = 10
 
-
+# Адрес получения накладных по оформленным заказам.
+ORDER_NOTIFICATION_EMAIL = os.getenv(
+    "ORDER_NOTIFICATION_EMAIL",
+    "",
+).strip()

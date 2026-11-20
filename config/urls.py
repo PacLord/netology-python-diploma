@@ -29,6 +29,8 @@ urlpatterns = [
     path("api/v1/user/", include("users.urls")),
     # API каталога и поставщиков.
     path("api/v1/", include("catalog.urls")),
+    # API корзины и заказов
+    path("api/v1/", include("orders.urls")),
 ]
 
 

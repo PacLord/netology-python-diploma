@@ -768,7 +768,7 @@ class ContactView(APIView):
 
     @extend_schema(
         tags=["Контакты"],
-        summary="Получение контактов покупателя",
+        summary="Получение контактов пользователя",
         description=(
             "Возвращает список контактов и адресов доставки "
             "текущего авторизованного покупателя."
@@ -858,22 +858,6 @@ class ContactView(APIView):
             status=status.HTTP_201_CREATED,
         )
 
-    @extend_schema(
-        tags=["Контакты"],
-        summary="Редактирование контакта",
-        description=(
-            "Позволяет изменить отдельные поля контакта "
-            "текущего пользователя. "
-            "Идентификатор контакта обязателен."
-        ),
-        request=ContactUpdateSerializer,
-        responses={
-            200: ContactSerializer,
-            400: OpenApiTypes.OBJECT,
-            401: OpenApiTypes.OBJECT,
-            404: OpenApiTypes.OBJECT,
-        },
-    )
     @extend_schema(
         tags=["Контакты"],
         summary="Частичное обновление контакта",

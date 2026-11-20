@@ -3,9 +3,9 @@ from django.urls import path
 from orders.views import (
     BasketView,
     OrderDetailView,
+    OrdersListView,
     OrderStatusUpdateView,
     OrderView,
-    OrdersListView,
     PartnerOrdersView,
 )
 

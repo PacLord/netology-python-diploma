@@ -330,3 +330,23 @@ class OrderItemAdmin(admin.ModelAdmin):
         "order",
         "product_info",
     )
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        """Запрещает ручное создание позиций заказа."""
+        return False
+
+    def has_change_permission(
+        self,
+        request: HttpRequest,
+        obj: OrderItem | None = None,
+    ) -> bool:
+        """Запрещает ручное изменение позиций заказа."""
+        return False
+
+    def has_delete_permission(
+        self,
+        request: HttpRequest,
+        obj: OrderItem | None = None,
+    ) -> bool:
+        """Запрещает ручное удаление позиций заказа."""
+        return False
